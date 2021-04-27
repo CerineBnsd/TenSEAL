@@ -242,15 +242,51 @@ shared_ptr<CKKSVector> CKKSVector::dot_plain_inplace(const plain_t& to_mul) {
 }
 
 shared_ptr<CKKSVector> CKKSVector::sum_inplace(size_t /*axis = 0*/) {
-    vector<Ciphertext> interm_sum;
-    // TODO use multithreading for the sum
-    for (size_t idx = 0; idx < this->_ciphertexts.size(); ++idx) {
-        Ciphertext out = this->_ciphertexts[idx];
-        sum_vector(this->tenseal_context(), out, this->_sizes[idx]);
-        interm_sum.push_back(out);
-    }
+    vector<Ciphertext> main_interm_sum;
     Ciphertext result;
-    tenseal_context()->evaluator->add_many(interm_sum, result);
+
+    auto worker_func = [&](size_t start, size_t end) -> Ciphertext {
+        vector<Ciphertext> thread_interm_sum;
+        for (size_t i = start; i < end; i++) {
+            Ciphertext out = this->_ciphertexts[i];
+            sum_vector(this->tenseal_context(), out, this->_sizes[i]);
+            thread_interm_sum.push_back(out);
+        }
+        Ciphertext thread_result;
+        tenseal_context()->evaluator->add_many(thread_interm_sum,
+                                               thread_result);
+        return thread_result;
+    };
+
+    auto n_jobs = this->tenseal_context()->dispatcher_size();
+
+    if (n_jobs == 1) {
+        result = worker_func(0, this->_ciphertexts.size());
+    } else {
+        std::vector<std::future<Ciphertext>> future_results;
+        size_t batch_size = (this->_ciphertexts.size() + n_jobs - 1) / n_jobs;
+
+        for (size_t i = 0; i < n_jobs; i++) {
+            future_results.push_back(
+                this->tenseal_context()->dispatcher()->enqueue_task(
+                    worker_func, i * batch_size,
+                    std::min((i + 1) * batch_size, this->_ciphertexts.size())));
+        }
+
+        std::optional<string> fail;
+        for (size_t i = 0; i < n_jobs; i++) {
+            try {
+                main_interm_sum.push_back(future_results[i].get());
+            } catch (std::exception& e) {
+                fail = e.what();
+            }
+        }
+
+        if (fail) {
+            throw invalid_argument(fail.value());
+        }
+        tenseal_context()->evaluator->add_many(main_interm_sum, result);
+    }
 
     this->_ciphertexts = {result};
     this->_sizes = {1};

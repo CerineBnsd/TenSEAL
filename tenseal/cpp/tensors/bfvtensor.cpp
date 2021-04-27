@@ -34,7 +34,7 @@ BFVTensor::BFVTensor(const shared_ptr<TenSEALContext>& ctx,
     auto worker_func = [&](size_t start, size_t end) -> bool {
         if(batch){
             for (size_t i = start; i < end; i++) {
-                enc_data[i] = (BFVTensor::encrypt(ctx, data.at(i)));
+                enc_data[i] = BFVTensor::encrypt(ctx, data.at(i));
             }
         }else{
             for (size_t i = start; i < end; i++) {
@@ -45,7 +45,7 @@ BFVTensor::BFVTensor(const shared_ptr<TenSEALContext>& ctx,
         return true;
     };
 
-    if (n_jobs == 1) {
+    if (true) {
         worker_func(0, size);
     } else {
         size_t batch_size = (size + n_jobs - 1) / n_jobs;

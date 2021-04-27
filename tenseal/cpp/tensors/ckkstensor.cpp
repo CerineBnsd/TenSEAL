@@ -43,7 +43,7 @@ CKKSTensor::CKKSTensor(const shared_ptr<TenSEALContext>& ctx,
         return true;
     };
 
-    if (n_jobs == 1) {
+    if (true) {
         worker_func(0, size);
     } else {
         size_t batch_size = (size + n_jobs - 1) / n_jobs;
