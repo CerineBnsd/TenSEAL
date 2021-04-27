@@ -7,7 +7,7 @@ using namespace std;
 
 CKKSTensor::CKKSTensor(const shared_ptr<TenSEALContext>& ctx,
                        const PlainTensor<double>& tensor,
-                       std::optional<double> scale, bool batch) {
+                       std::optional<double> scale, bool batch) {    
     this->link_tenseal_context(ctx);
     if (scale.has_value()) {
         this->_init_scale = scale.value();
@@ -17,23 +17,63 @@ CKKSTensor::CKKSTensor(const shared_ptr<TenSEALContext>& ctx,
 
     vector<Ciphertext> enc_data;
     vector<size_t> enc_shape = tensor.shape();
+    size_t n_jobs = this->tenseal_context()->dispatcher_size();
+    size_t size;
     if (batch) {
         _batch_size = enc_shape[0];
-        auto data = tensor.batch(0);
         enc_shape.erase(enc_shape.begin());
-
-        for (auto it = data.cbegin(); it != data.cend(); it++)
-            enc_data.push_back(
-                CKKSTensor::encrypt(ctx, this->_init_scale, *it));
-
+        size = tensor.batch(0).size();
     } else {
-        for (auto it = tensor.cbegin(); it != tensor.cend(); it++)
-            enc_data.push_back(
-                CKKSTensor::encrypt(ctx, this->_init_scale, *it));
+        size = tensor.flat_size();
     }
+  
+    enc_data.resize(size);
 
+    auto worker_func = [&](size_t start, size_t end, bool is_batch, double scale) -> bool {
+        if(is_batch){
+            for (size_t i = start ; i < end ; i++){
+                enc_data[i] = CKKSTensor::encrypt(ctx, scale, tensor.batch(0).at(i));
+            }
+          
+        } else {
+            for (size_t i = start ; i < end ; i++){
+                enc_data[i] = CKKSTensor::encrypt(ctx, scale, tensor.flat_at(i));
+            }
+          
+        }
+      
+        return true;
+    };
+
+    if (n_jobs == 1 ) {
+        worker_func(0, size, batch,this->_init_scale);
+    } else {
+        size_t batch_size = (size + n_jobs - 1) / n_jobs;
+        vector<future<bool>> futures;
+        for (size_t i = 0; i < n_jobs; i++) {
+            futures.push_back(
+                this->tenseal_context()->dispatcher()->enqueue_task(
+                    worker_func, i * batch_size,
+                    std::min((i + 1) * batch_size, size), batch,this->_init_scale,&tensor,&enc_data,&ctx));
+        }
+      
+        std::optional<std::string> fail;
+        for (size_t i = 0; i < futures.size(); i++) {
+            try {
+                futures[i].get();
+            } catch (std::exception& e) {
+                fail = e.what();
+            }
+        }
+
+        if (fail) {
+            throw invalid_argument(fail.value());
+        }
+    }
+  
     _data = TensorStorage<Ciphertext>(enc_data, enc_shape);
 }
+
 
 CKKSTensor::CKKSTensor(const shared_ptr<TenSEALContext>& ctx,
                        const string& tensor) {
