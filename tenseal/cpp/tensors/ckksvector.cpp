@@ -274,7 +274,7 @@ shared_ptr<CKKSVector> CKKSVector::sum_inplace(size_t /*axis = 0*/) {
         }
 
         std::optional<string> fail;
-        for (size_t i = 0; i < n_jobs; i++) {
+        for (size_t i = 0; i < n_jobs ; i++) {
             try {
                 main_interm_sum.push_back(future_results[i].get());
             } catch (std::exception& e) {
